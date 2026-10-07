@@ -17,6 +17,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "analysiswidget.h"
+#include "chartwidget.h"
+
 namespace {
 
 // Thousands separators, e.g. 265,591,000
@@ -80,6 +83,14 @@ MainWindow::MainWindow(QWidget *parent)
     liveLayout->addWidget(m_table);
 
     tabs->addTab(livePage, QStringLiteral("Live prices"));
+
+    // ---------- Chart page ----------
+    m_chartWidget = new ChartWidget(&m_db, this);
+    tabs->addTab(m_chartWidget, QStringLiteral("Chart"));
+
+    // ---------- Analysis page ----------
+    m_analysisWidget = new AnalysisWidget(&m_db, this);
+    tabs->addTab(m_analysisWidget, QStringLiteral("Analysis"));
 
     // ---------- History page ----------
     auto *historyPage = new QWidget;
@@ -200,11 +211,12 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
     // Save to the database
     const int added = m_db.insertSnapshot(items);
 
-    // Fill the history combo box once
+    // Fill the item lists once
     if (m_historyCombo->count() == 0) {
         for (const PriceItem &it : items)
             m_historyCombo->addItem(it.label, it.key);
     }
+    m_chartWidget->setItems(items);
 
     QString status = QStringLiteral("Last update: ")
                      + QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
@@ -213,6 +225,8 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
     m_statusLabel->setText(status);
 
     refreshHistory();
+    m_chartWidget->reload();
+    m_analysisWidget->refresh(items);
 }
 
 void MainWindow::onFetchFailed(const QString &message)

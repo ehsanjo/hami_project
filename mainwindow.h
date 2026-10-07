@@ -6,6 +6,8 @@
 #include "pricedatabase.h"
 #include "pricefetcher.h"
 
+class AnalysisWidget;
+class ChartWidget;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -41,5 +43,7 @@ private:
     QComboBox *m_historyCombo;
     QTableWidget *m_historyTable;
     QLabel *m_historyInfo;
+    ChartWidget *m_chartWidget;
+    AnalysisWidget *m_analysisWidget;
     bool m_busy = false;
 };

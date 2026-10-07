@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Sql)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Sql Charts)
 
 add_executable(PriceTracker
     main.cpp
@@ -15,6 +15,12 @@ add_executable(PriceTracker
     pricefetcher.cpp
     pricedatabase.h
     pricedatabase.cpp
+    chartwidget.h
+    chartwidget.cpp
+    analysis.h
+    analysis.cpp
+    analysiswidget.h
+    analysiswidget.cpp
 )
 target_link_libraries(PriceTracker PRIVATE
-    Qt6::Core Qt6::Network Qt6::Widgets Qt6::Sql)
+    Qt6::Core Qt6::Network Qt6::Widgets Qt6::Sql Qt6::Charts)
