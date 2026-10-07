@@ -7,5 +7,10 @@ set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Network)
 
-add_executable(PriceTracker main.cpp)
+add_executable(PriceTracker
+    main.cpp
+    pricefetcher.h
+    pricefetcher.cpp
+    pricefetcher.h pricefetcher.cpp
+)
 target_link_libraries(PriceTracker PRIVATE Qt6::Core Qt6::Network)
