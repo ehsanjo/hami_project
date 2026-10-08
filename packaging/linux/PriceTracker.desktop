@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PriceTracker
+GenericName=Gold and Dollar Price Tracker
+Comment=Live gold and dollar prices with charts, analysis and alerts
+Exec=PriceTracker
+Icon=PriceTracker
+Terminal=false
+Categories=Office;Finance;Qt;
+StartupNotify=true

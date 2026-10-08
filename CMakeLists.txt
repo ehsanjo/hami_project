@@ -34,3 +34,23 @@ target_link_libraries(PriceTracker PRIVATE PriceCore Qt6::Widgets Qt6::Charts)
 add_executable(tst_core tests/tst_core.cpp)
 target_link_libraries(tst_core PRIVATE PriceCore Qt6::Test)
 add_test(NAME tst_core COMMAND tst_core)
+
+
+set(APP_VERSION "1.0.0")
+target_compile_definitions(PriceTracker PRIVATE APP_VERSION="${APP_VERSION}")
+
+include(GNUInstallDirs)
+
+if(WIN32)
+    # Windows: no console window, install exe at the root of the install dir
+    set_target_properties(PriceTracker PROPERTIES WIN32_EXECUTABLE ON)
+    install(TARGETS PriceTracker RUNTIME DESTINATION .)
+else()
+    # Linux: standard layout (bin, applications, icons)
+    install(TARGETS PriceTracker RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES packaging/linux/PriceTracker.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES packaging/icon.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
+            RENAME PriceTracker.png)
+endif()
