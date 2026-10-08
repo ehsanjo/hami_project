@@ -1,10 +1,14 @@
 #include "pricefetcher.h"
-
+#include <QRandomGenerator>
+#include <QUrlQuery>
+#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QTimeZone>
+
+#include "settings.h"
 
 namespace {
 
@@ -30,34 +34,72 @@ double parseNumber(QString s)
     return s.toDouble();
 }
 
+const char *const kCallSubdomains[] = {"call2", "call3", "call4"};
+constexpr int kCallSubdomainCount = 3;
+
+// Same as the site: a new random "rev" on every request, and one of the
+// callN.tgju.org servers.
+QUrl withFreshRev(QUrl url, int subdomain)
+{
+    if (!url.host().endsWith(QLatin1String("tgju.org")))
+        return url;
+
+    static const QRegularExpression callHost(QStringLiteral("^call\\d+\\.tgju\\.org$"));
+    if (callHost.match(url.host()).hasMatch())
+        url.setHost(QString::fromLatin1(kCallSubdomains[subdomain % kCallSubdomainCount])
+                    + QStringLiteral(".tgju.org"));
+
+    static const QString chars = QStringLiteral(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+    QString rev;
+    rev.reserve(60);
+    for (int i = 0; i < 60; ++i)
+        rev.append(chars.at(QRandomGenerator::global()->bounded(chars.size())));
+
+    QUrlQuery query(url);
+    query.removeAllQueryItems(QStringLiteral("rev"));
+    query.addQueryItem(QStringLiteral("rev"), rev);
+    url.setQuery(query);
+    return url;
+}
+
 } // namespace
 
 PriceFetcher::PriceFetcher(QObject *parent)
     : QObject(parent)
-    , m_url(QStringLiteral(
-          "https://call4.tgju.org/ajax.json?rev=oPSiDlpuNgJS9q9DvxQwKoiG9YnbtglvFyXN8rb1uMFJRaTI1LfEt32uCEwD"))
+    , m_url(AppSettings::sourceUrl())
+    , m_staleAfterHours(AppSettings::staleAfterHours())
 {
+    m_subdomain = int(QRandomGenerator::global()->bounded(kCallSubdomainCount));
 }
+
 
 void PriceFetcher::fetch()
 {
-    QNetworkRequest req(m_url);
-    req.setHeader(QNetworkRequest::UserAgentHeader,
-                  "PriceTracker/0.2 (personal student project)");
+    QNetworkRequest req(withFreshRev(m_url, m_subdomain));
+    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                     QNetworkRequest::AlwaysNetwork);
+    req.setRawHeader("Cache-Control", "no-cache");
     req.setTransferTimeout(15000);
 
+    const int staleHours = m_staleAfterHours;
     QNetworkReply *reply = m_nam.get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, staleHours]() {
         reply->deleteLater();
 
         if (reply->error() != QNetworkReply::NoError) {
-            emit fetchFailed(reply->errorString());
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            QString message = reply->errorString();
+            if (status > 0)
+                message = QStringLiteral("HTTP %1 - %2").arg(status).arg(message);
+            emit fetchFailed(message);
             return;
         }
 
         QString error;
-        const QVector<PriceItem> items = parseResponse(reply->readAll(), &error);
+        const QVector<PriceItem> items = parseResponse(reply->readAll(), &error, staleHours);
         if (!error.isEmpty()) {
+            m_subdomain = (m_subdomain + 1) % kCallSubdomainCount;
             emit fetchFailed(error);
             return;
         }
@@ -65,7 +107,8 @@ void PriceFetcher::fetch()
     });
 }
 
-QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *error)
+QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *error,
+                                               int staleAfterHours, const QDateTime &now)
 {
     QVector<PriceItem> result;
 
@@ -73,7 +116,8 @@ QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *
     const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
         if (error)
-            *error = QStringLiteral("JSON error: ") + parseError.errorString();
+            *error = QStringLiteral("The response is not valid JSON (")
+                     + parseError.errorString() + QLatin1Char(')');
         return result;
     }
 
@@ -86,7 +130,7 @@ QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *
     const QJsonObject current = currentValue.toObject();
 
     const QTimeZone tehran("Asia/Tehran");
-    const QDateTime now = QDateTime::currentDateTime();
+    bool anyFound = false;
 
     for (const WatchItem &w : kWatchList) {
         PriceItem item;
@@ -105,12 +149,20 @@ QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *
                                                  QStringLiteral("yyyy-MM-dd HH:mm:ss"));
             item.updated.setTimeZone(tehran);
             item.stale = !item.updated.isValid()
-                         || item.updated.secsTo(now) > 24 * 3600;
+                         || item.updated.secsTo(now) > qint64(staleAfterHours) * 3600;
             item.found = true;
+            anyFound = true;
         } else {
             item.stale = true;
         }
         result.append(item);
+    }
+
+    if (!anyFound) {
+        if (error)
+            *error = QStringLiteral("None of the expected prices were found "
+                                    "(the site format or the URL may have changed)");
+        return QVector<PriceItem>();
     }
     return result;
 }

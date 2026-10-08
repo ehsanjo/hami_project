@@ -17,8 +17,9 @@ public:
     PriceDatabase();
     ~PriceDatabase();
 
-    // Opens (and creates if needed) the database file.
-    bool open(QString *error = nullptr);
+    // Opens (and creates if needed) the database.
+    // filePath empty = default file in the app data folder; ":memory:" is useful for tests.
+    bool open(QString *error = nullptr, const QString &filePath = QString());
     bool isOpen() const { return m_open; }
     QString path() const { return m_path; }
 

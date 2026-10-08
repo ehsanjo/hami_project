@@ -24,15 +24,19 @@ PriceDatabase::~PriceDatabase()
     }
 }
 
-bool PriceDatabase::open(QString *error)
+bool PriceDatabase::open(QString *error, const QString &filePath)
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (!QDir().mkpath(dir)) {
-        if (error)
-            *error = QStringLiteral("Cannot create folder: ") + dir;
-        return false;
+    if (filePath.isEmpty()) {
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        if (!QDir().mkpath(dir)) {
+            if (error)
+                *error = QStringLiteral("Cannot create folder: ") + dir;
+            return false;
+        }
+        m_path = dir + QStringLiteral("/prices.sqlite");
+    } else {
+        m_path = filePath;
     }
-    m_path = dir + QStringLiteral("/prices.sqlite");
 
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connName);
     db.setDatabaseName(m_path);
@@ -101,14 +105,18 @@ QVector<PricePoint> PriceDatabase::history(const QString &itemKey,
     if (!m_open)
         return points;
 
+    const bool hasSince = since.isValid();
+
     QSqlDatabase db = QSqlDatabase::database(m_connName);
     QSqlQuery q(db);
-    q.prepare(QStringLiteral(
-        "SELECT ts, price FROM prices "
-        "WHERE item_key = :key AND ts >= :since ORDER BY ts"));
+    q.prepare(hasSince
+                  ? QStringLiteral("SELECT ts, price FROM prices "
+                                   "WHERE item_key = :key AND ts >= :since ORDER BY ts")
+                  : QStringLiteral("SELECT ts, price FROM prices "
+                                   "WHERE item_key = :key ORDER BY ts"));
     q.bindValue(QStringLiteral(":key"), itemKey);
-    q.bindValue(QStringLiteral(":since"),
-                since.isValid() ? since.toUTC().toString(Qt::ISODate) : QString());
+    if (hasSince)
+        q.bindValue(QStringLiteral(":since"), since.toUTC().toString(Qt::ISODate));
 
     if (!q.exec()) {
         qWarning() << "History query failed:" << q.lastError().text();
@@ -122,7 +130,6 @@ QVector<PricePoint> PriceDatabase::history(const QString &itemKey,
     }
     return points;
 }
-
 int PriceDatabase::totalRows() const
 {
     if (!m_open)

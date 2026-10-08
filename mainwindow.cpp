@@ -1,15 +1,24 @@
 #include "mainwindow.h"
 
+#include <QAction>
+#include <QApplication>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QLocale>
+#include <QMenu>
+#include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTime>
@@ -17,8 +26,11 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "alertswidget.h"
 #include "analysiswidget.h"
 #include "chartwidget.h"
+#include "settings.h"
+#include "settingswidget.h"
 
 namespace {
 
@@ -40,6 +52,29 @@ QTableWidgetItem *makeItem(const QString &text, bool alignRight = true)
     return item;
 }
 
+// A simple gold coin drawn in code, so no image files are needed.
+QIcon makeAppIcon()
+{
+    QPixmap pm(64, 64);
+    pm.fill(Qt::transparent);
+
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(150, 115, 20), 3));
+    p.setBrush(QColor(230, 190, 50));
+    p.drawEllipse(4, 4, 56, 56);
+
+    QFont f = p.font();
+    f.setBold(true);
+    f.setPixelSize(36);
+    p.setFont(f);
+    p.setPen(QColor(110, 80, 10));
+    p.drawText(pm.rect(), Qt::AlignCenter, QStringLiteral("$"));
+    p.end();
+
+    return QIcon(pm);
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -47,6 +82,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_timer(new QTimer(this))
 {
     setWindowTitle(QStringLiteral("Gold & Dollar Tracker"));
+    setWindowIcon(makeAppIcon());
 
     auto *tabs = new QTabWidget(this);
 
@@ -57,11 +93,12 @@ MainWindow::MainWindow(QWidget *parent)
     auto *bar = new QHBoxLayout;
     m_refreshButton = new QPushButton(QStringLiteral("Refresh now"));
     m_autoCheck = new QCheckBox(QStringLiteral("Auto refresh every"));
-    m_autoCheck->setChecked(true);
     m_intervalSpin = new QSpinBox;
     m_intervalSpin->setRange(30, 3600); // be polite to the server
-    m_intervalSpin->setValue(60);
     m_intervalSpin->setSuffix(QStringLiteral(" s"));
+    // Remembered between runs
+    m_autoCheck->setChecked(AppSettings::autoRefresh());
+    m_intervalSpin->setValue(AppSettings::refreshIntervalSeconds());
     bar->addWidget(m_refreshButton);
     bar->addSpacing(12);
     bar->addWidget(m_autoCheck);
@@ -92,6 +129,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_analysisWidget = new AnalysisWidget(&m_db, this);
     tabs->addTab(m_analysisWidget, QStringLiteral("Analysis"));
 
+    // ---------- Alerts page ----------
+    m_alertsWidget = new AlertsWidget(&m_alertManager, this);
+    tabs->addTab(m_alertsWidget, QStringLiteral("Alerts"));
+
     // ---------- History page ----------
     auto *historyPage = new QWidget;
     auto *historyLayout = new QVBoxLayout(historyPage);
@@ -117,6 +158,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     tabs->addTab(historyPage, QStringLiteral("History"));
 
+    // ---------- Settings page ----------
+    m_settingsWidget = new SettingsWidget(this);
+    tabs->addTab(m_settingsWidget, QStringLiteral("Settings"));
+
     setCentralWidget(tabs);
 
     m_statusLabel = new QLabel(QStringLiteral("Starting..."));
@@ -128,6 +173,9 @@ MainWindow::MainWindow(QWidget *parent)
         m_historyInfo->setText(QStringLiteral("Database error: ") + dbError
                                + QStringLiteral("  (prices will not be saved)"));
 
+    // ---------- Tray icon ----------
+    setupTray();
+
     // ---------- Connections ----------
     connect(m_refreshButton, &QPushButton::clicked, this, &MainWindow::refresh);
     connect(m_autoCheck, &QCheckBox::toggled, this, &MainWindow::applyTimerSettings);
@@ -135,21 +183,117 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_timer, &QTimer::timeout, this, &MainWindow::refresh);
     connect(&m_fetcher, &PriceFetcher::pricesReady, this, &MainWindow::onPricesReady);
     connect(&m_fetcher, &PriceFetcher::fetchFailed, this, &MainWindow::onFetchFailed);
+    connect(&m_alertManager, &AlertManager::alertTriggered, this, &MainWindow::onAlertTriggered);
+    connect(m_settingsWidget, &SettingsWidget::settingsApplied, this, &MainWindow::onSettingsApplied);
     connect(m_historyCombo, &QComboBox::currentIndexChanged, this, &MainWindow::refreshHistory);
     connect(tabs, &QTabWidget::currentChanged, this, &MainWindow::refreshHistory);
 
-    applyTimerSettings();
+    m_intervalSpin->setEnabled(m_autoCheck->isChecked());
+    updateTimerInterval();
     QTimer::singleShot(0, this, &MainWindow::refresh); // first fetch right after startup
 }
 
+void MainWindow::setupTray()
+{
+    if (!QSystemTrayIcon::isSystemTrayAvailable())
+        return; // no tray on this desktop: closing the window will quit the app
+
+    m_tray = new QSystemTrayIcon(makeAppIcon(), this);
+    m_tray->setToolTip(QStringLiteral("Gold & Dollar Tracker"));
+
+    auto *menu = new QMenu(this);
+    menu->addAction(QStringLiteral("Show / hide window"), this, &MainWindow::toggleVisibility);
+    menu->addAction(QStringLiteral("Refresh now"), this, &MainWindow::refresh);
+    menu->addSeparator();
+    menu->addAction(QStringLiteral("Quit"), this, &MainWindow::quitApp);
+    m_tray->setContextMenu(menu);
+
+    connect(m_tray, &QSystemTrayIcon::activated, this,
+            [this](QSystemTrayIcon::ActivationReason reason) {
+        if (reason == QSystemTrayIcon::Trigger)
+            toggleVisibility();
+    });
+
+    m_tray->show();
+    QApplication::setQuitOnLastWindowClosed(false);
+}
+
+void MainWindow::updateTrayTooltip()
+{
+    if (!m_tray)
+        return;
+    m_tray->setToolTip(m_failureCount >= 3
+                           ? QStringLiteral("Gold & Dollar Tracker - offline")
+                           : QStringLiteral("Gold & Dollar Tracker"));
+}
+
+void MainWindow::toggleVisibility()
+{
+    if (isVisible() && !isMinimized()) {
+        hide();
+    } else {
+        showNormal();
+        raise();
+        activateWindow();
+    }
+}
+
+void MainWindow::quitApp()
+{
+    QApplication::quit();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // With a working tray, closing the window only hides it.
+    if (m_tray && m_tray->isVisible()) {
+        hide();
+        if (!m_trayHintShown) {
+            m_tray->showMessage(QStringLiteral("Still running"),
+                                QStringLiteral("Prices keep updating and alerts stay active. "
+                                               "Use the tray icon menu to quit."),
+                                QSystemTrayIcon::Information, 5000);
+            m_trayHintShown = true;
+        }
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
+}
+
+// Called when the user changes the auto refresh checkbox or the interval.
 void MainWindow::applyTimerSettings()
 {
+    AppSettings::setAutoRefresh(m_autoCheck->isChecked());
+    AppSettings::setRefreshIntervalSeconds(m_intervalSpin->value());
     m_intervalSpin->setEnabled(m_autoCheck->isChecked());
-    m_timer->setInterval(m_intervalSpin->value() * 1000);
+    updateTimerInterval();
+}
+
+// Sets the timer interval. After repeated failures it retries more slowly
+// (2x, 4x, 8x the normal interval, at most 15 minutes).
+void MainWindow::updateTimerInterval()
+{
+    const int base = m_intervalSpin->value();
+    int seconds = base;
+    if (m_failureCount > 1) {
+        const int factor = 1 << qMin(m_failureCount - 1, 3);
+        seconds = qMin(base * factor, qMax(base, 900));
+    }
+    m_timer->setInterval(seconds * 1000);
     if (m_autoCheck->isChecked())
         m_timer->start();
     else
         m_timer->stop();
+}
+
+void MainWindow::onSettingsApplied()
+{
+    m_fetcher.setUrl(QUrl(AppSettings::sourceUrl()));
+    m_fetcher.setStaleAfterHours(AppSettings::staleAfterHours());
+    m_failureCount = 0;
+    updateTimerInterval();
+    refresh();
 }
 
 void MainWindow::setBusy(bool busy)
@@ -170,6 +314,13 @@ void MainWindow::refresh()
 void MainWindow::onPricesReady(const QVector<PriceItem> &items)
 {
     setBusy(false);
+    m_lastSuccess = QDateTime::currentDateTime();
+    if (m_failureCount > 0) {
+        m_failureCount = 0;
+        updateTimerInterval(); // back to the normal interval
+        updateTrayTooltip();
+    }
+
     m_table->setRowCount(items.size());
 
     const QColor up(0, 140, 0);
@@ -227,13 +378,50 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
     refreshHistory();
     m_chartWidget->reload();
     m_analysisWidget->refresh(items);
+
+    // Alerts: check first, then let the Alerts tab show the new state
+    m_alertManager.check(items);
+    m_alertsWidget->refresh(items);
 }
 
 void MainWindow::onFetchFailed(const QString &message)
 {
     setBusy(false);
-    m_statusLabel->setText(QStringLiteral("Update failed: ") + message
-                           + QStringLiteral(" (showing previous data)"));
+    ++m_failureCount;
+    updateTimerInterval();
+    updateTrayTooltip();
+
+    QString text = QStringLiteral("Update failed: ") + message;
+    if (m_failureCount > 1)
+        text += QStringLiteral("  (%1 failures in a row, retrying more slowly)")
+                    .arg(m_failureCount);
+    if (m_lastSuccess.isValid())
+        text += QStringLiteral("  |  showing data from ")
+                + m_lastSuccess.toString(QStringLiteral("HH:mm:ss"));
+    else
+        text += QStringLiteral("  |  no data yet");
+    m_statusLabel->setText(text);
+}
+
+void MainWindow::onAlertTriggered(const Alert &alert, double price)
+{
+    const QString direction = alert.condition == Alert::Above ? QStringLiteral("at or above")
+                                                              : QStringLiteral("at or below");
+    const QString title = QStringLiteral("Price alert");
+    const QString text = QStringLiteral("%1 is now %2\n(alert: %3 %4)")
+                             .arg(alert.label, formatNumber(price), direction,
+                                  formatNumber(alert.threshold));
+
+    if (m_tray && m_tray->isVisible() && QSystemTrayIcon::supportsMessages()) {
+        m_tray->showMessage(title, text, QSystemTrayIcon::Information, 15000);
+    } else {
+        // No tray notification available: show a small non-blocking dialog
+        auto *box = new QMessageBox(QMessageBox::Information, title, text,
+                                    QMessageBox::Ok, this);
+        box->setAttribute(Qt::WA_DeleteOnClose);
+        box->open();
+    }
+    QApplication::beep();
 }
 
 void MainWindow::refreshHistory()
@@ -258,7 +446,7 @@ void MainWindow::refreshHistory()
     for (int i = 0; i < shown; ++i) {
         const PricePoint &p = points.at(points.size() - 1 - i);
         m_historyTable->setItem(i, 0, makeItem(
-                                          p.time.toTimeZone(tehran).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")), false));
+            p.time.toTimeZone(tehran).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")), false));
         m_historyTable->setItem(i, 1, makeItem(formatNumber(p.price)));
     }
 }
