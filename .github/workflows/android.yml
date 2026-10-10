@@ -6,11 +6,11 @@ on:
   workflow_dispatch:        # lets you run it manually from the Actions tab
 
 env:
-  QT_VERSION: "6.8.3"       # use the same minor version you use locally
-  NDK_VERSION: "26.1.10909125"   # the NDK Qt 6.8 expects
+  QT_VERSION: "6.8.3"
+  NDK_VERSION: "26.1.10909125"
 
 permissions:
-  contents: write      # put this at the top level, next to "on:" and "env:"
+  contents: write           # needed to create the release
 
 jobs:
   apk:
@@ -72,7 +72,7 @@ jobs:
       - name: Find APK
         run: find build -name "*.apk" -print
 
-	- name: Sign APK
+      - name: Sign APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
