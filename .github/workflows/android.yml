@@ -60,16 +60,26 @@ jobs:
       - name: Build APK
         run: cmake --build build --target apk
 
+      - name: Find APK
+        run: find build -name "*.apk" -print
+
       - name: Sign APK
         run: |
           BT="$ANDROID_SDK_ROOT/build-tools/35.0.0"
-          APK_DIR=build/android-build/build/outputs/apk/release
+
+          # Prefer the unsigned release APK, otherwise take any APK that was built
+          APK=$(find build -name "*-release-unsigned.apk" | head -n 1)
+          if [ -z "$APK" ]; then APK=$(find build -name "*.apk" | head -n 1); fi
+          if [ -z "$APK" ]; then echo "No APK found"; exit 1; fi
+          echo "Using: $APK"
+
           keytool -genkeypair -keystore my.keystore -alias key -keyalg RSA \
             -keysize 2048 -validity 10000 -storepass android -keypass android \
             -dname "CN=PriceTracker"
-          "$BT/zipalign" -f -p 4 "$APK_DIR/"*-release-unsigned.apk aligned.apk
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
           "$BT/apksigner" sign --ks my.keystore --ks-pass pass:android \
             --out PriceTracker-signed.apk aligned.apk
+          "$BT/apksigner" verify --verbose PriceTracker-signed.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
