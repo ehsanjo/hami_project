@@ -117,23 +117,23 @@ PriceItem PriceFetcher::costummize_prices(const QVector<PriceItem> &items)
     };
 
     const PriceItem *dollar = find("price_dollar_rl");
-    const PriceItem *gram24 = find("geram24");
+    const PriceItem *gram18 = find("geram18");
     const PriceItem *ounce  = find("ons");
 
     PriceItem n;
     n.key   = QStringLiteral("kharid");
     n.label = QStringLiteral("Comparison (rial)");
 
-    if (!dollar || !gram24 || !ounce) {   // can't compute: mark as missing
+    if (!dollar || !gram18 || !ounce) {   // can't compute: mark as missing
         n.found = false;
         n.stale = true;
         return n;
     }
 
     n.found   = true;
-    n.price   = (dollar->price * ounce->price / 41.49) - gram24->price;
-    n.updated = qMax(qMax(dollar->updated, gram24->updated), ounce->updated);
-    n.stale   = dollar->stale || gram24->stale || ounce->stale;
+    n.price   = (dollar->price * ounce->price / 41.49) - gram18->price;
+    n.updated = qMax(qMax(dollar->updated, gram18->updated), ounce->updated);
+    n.stale   = dollar->stale || gram18->stale || ounce->stale;
     return n;
 }
 QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *error,
