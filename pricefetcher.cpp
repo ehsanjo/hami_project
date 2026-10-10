@@ -106,7 +106,36 @@ void PriceFetcher::fetch()
         emit pricesReady(items);
     });
 }
+PriceItem PriceFetcher::costummize_prices(const QVector<PriceItem> &items)
+{
+    auto find = [&items](const char *key) -> const PriceItem * {
+        for (const PriceItem &it : items) {
+            if (it.key == QLatin1String(key) && it.found)
+                return &it;
+        }
+        return nullptr;
+    };
 
+    const PriceItem *dollar = find("price_dollar_rl");
+    const PriceItem *gram24 = find("geram24");
+    const PriceItem *ounce  = find("ons");
+
+    PriceItem n;
+    n.key   = QStringLiteral("kharid");
+    n.label = QStringLiteral("Comparison (rial)");
+
+    if (!dollar || !gram24 || !ounce) {   // can't compute: mark as missing
+        n.found = false;
+        n.stale = true;
+        return n;
+    }
+
+    n.found   = true;
+    n.price   = (dollar->price * ounce->price / 41.49) - gram24->price;
+    n.updated = qMax(qMax(dollar->updated, gram24->updated), ounce->updated);
+    n.stale   = dollar->stale || gram24->stale || ounce->stale;
+    return n;
+}
 QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *error,
                                                int staleAfterHours, const QDateTime &now)
 {
@@ -158,11 +187,15 @@ QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *
         result.append(item);
     }
 
+
     if (!anyFound) {
         if (error)
             *error = QStringLiteral("None of the expected prices were found "
                                     "(the site format or the URL may have changed)");
         return QVector<PriceItem>();
     }
+
+    result.append(costummize_prices(result));
+
     return result;
 }

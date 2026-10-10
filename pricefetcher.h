@@ -38,6 +38,7 @@ public:
                                             QString *error = nullptr,
                                             int staleAfterHours = 24,
                                             const QDateTime &now = QDateTime::currentDateTime());
+    static PriceItem costummize_prices(const QVector<PriceItem> &items);
 
 signals:
     void pricesReady(const QVector<PriceItem> &items);
