@@ -52,6 +52,9 @@ jobs:
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "ndk;${NDK_VERSION}" "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Get android_openssl
+        run: git clone --depth 1 https://github.com/KDAB/android_openssl.git
+
       - name: Configure
         run: |
           "$QT_ROOT_DIR/bin/qt-cmake" -S . -B build -G Ninja \
@@ -69,23 +72,27 @@ jobs:
       - name: Find APK
         run: find build -name "*.apk" -print
 
-      - name: Sign APK
+	- name: Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           BT="$ANDROID_SDK_ROOT/build-tools/35.0.0"
-
-          # Prefer the unsigned release APK, otherwise take any APK that was built
           APK=$(find build -name "*-release-unsigned.apk" | head -n 1)
           if [ -z "$APK" ]; then APK=$(find build -name "*.apk" | head -n 1); fi
           if [ -z "$APK" ]; then echo "No APK found"; exit 1; fi
-          echo "Using: $APK"
 
-          keytool -genkeypair -keystore my.keystore -alias key -keyalg RSA \
-            -keysize 2048 -validity 10000 -storepass android -keypass android \
-            -dname "CN=PriceTracker"
+          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
           "$BT/zipalign" -f -p 4 "$APK" aligned.apk
-          "$BT/apksigner" sign --ks my.keystore --ks-pass pass:android \
+          "$BT/apksigner" sign --ks release.keystore --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS \
             --out PriceTracker-signed.apk aligned.apk
           "$BT/apksigner" verify --verbose PriceTracker-signed.apk
+          rm -f release.keystore
+
+      - name: Check OpenSSL in APK
+        run: unzip -l PriceTracker-signed.apk | grep -iE "libssl|libcrypto"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

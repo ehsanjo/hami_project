@@ -2,10 +2,12 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QAbstractSpinBox>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
+#include <QGuiApplication>
 #include <QScroller>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -182,6 +184,9 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(tabs);
 
     m_statusLabel = new QLabel(QStringLiteral("Starting..."));
+#ifdef Q_OS_ANDROID
+    m_statusLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+#endif
     statusBar()->addWidget(m_statusLabel);
 
     // ---------- Database ----------
@@ -204,7 +209,33 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_settingsWidget, &SettingsWidget::settingsApplied, this, &MainWindow::onSettingsApplied);
     connect(m_historyCombo, &QComboBox::currentIndexChanged, this, &MainWindow::refreshHistory);
     connect(tabs, &QTabWidget::currentChanged, this, &MainWindow::refreshHistory);
+#ifdef Q_OS_ANDROID
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
+            [this](Qt::ApplicationState state) {
+                if (state == Qt::ApplicationActive) {
+                    refresh();               // does nothing if a request is already running
+                    updateTimerInterval();   // restart the timer
+                }
+            });
+#endif
+#ifdef Q_OS_ANDROID
+    // Bigger touch targets
+    setStyleSheet(QStringLiteral(
+        "QPushButton { min-height: 48px; padding: 6px 14px; }"
+        "QComboBox { min-height: 44px; }"
+        "QSpinBox, QDoubleSpinBox, QLineEdit { min-height: 44px; }"
+        "QCheckBox { min-height: 44px; spacing: 10px; }"
+        "QCheckBox::indicator { width: 28px; height: 28px; }"
+        "QTabBar::tab { min-height: 44px; padding: 6px 12px; }"));
 
+    // The tiny spin box arrows are hard to hit: type the value instead
+    for (auto *sb : findChildren<QAbstractSpinBox *>())
+        sb->setButtonSymbols(QAbstractSpinBox::NoButtons);
+
+    // Taller table rows
+    m_table->verticalHeader()->setDefaultSectionSize(48);
+    m_historyTable->verticalHeader()->setDefaultSectionSize(44);
+#endif
     m_intervalSpin->setEnabled(m_autoCheck->isChecked());
     updateTimerInterval();
     QTimer::singleShot(0, this, &MainWindow::refresh); // first fetch right after startup
