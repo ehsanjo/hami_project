@@ -6,6 +6,7 @@
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
+#include <QScroller>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
@@ -85,6 +86,11 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowIcon(makeAppIcon());
 
     auto *tabs = new QTabWidget(this);
+#ifdef Q_OS_ANDROID
+    // Phone layout: thumb-friendly tab bar at the bottom, scroll arrows for 6 tabs
+    tabs->setTabPosition(QTabWidget::South);
+    tabs->setUsesScrollButtons(true);
+#endif
 
     // ---------- Live prices page ----------
     auto *livePage = new QWidget;
@@ -94,7 +100,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_refreshButton = new QPushButton(QStringLiteral("Refresh now"));
     m_autoCheck = new QCheckBox(QStringLiteral("Auto refresh every"));
     m_intervalSpin = new QSpinBox;
-    m_intervalSpin->setRange(30, 3600); // be polite to the server
+    m_intervalSpin->setRange(10, 3600); // be polite to the server
     m_intervalSpin->setSuffix(QStringLiteral(" s"));
     // Remembered between runs
     m_autoCheck->setChecked(AppSettings::autoRefresh());
@@ -118,7 +124,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     liveLayout->addWidget(m_table);
-
+#ifdef Q_OS_ANDROID
+    // Portrait phone screens are narrow: hide "Change" and "Updated".
+    // Stale rows still turn gray. Delete these two lines to show all columns.
+    m_table->setColumnHidden(2, true);
+    m_table->setColumnHidden(4, true);
+    m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    QScroller::grabGesture(m_table->viewport(), QScroller::LeftMouseButtonGesture);
+#endif
     tabs->addTab(livePage, QStringLiteral("Live prices"));
 
     // ---------- Chart page ----------
@@ -151,6 +164,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_historyTable->verticalHeader()->hide();
     m_historyTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     historyLayout->addWidget(m_historyTable);
+#ifdef Q_OS_ANDROID
+    m_historyTable->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    QScroller::grabGesture(m_historyTable->viewport(), QScroller::LeftMouseButtonGesture);
+#endif
 
     m_historyInfo = new QLabel;
     m_historyInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -195,8 +212,13 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::setupTray()
 {
-    if (!QSystemTrayIcon::isSystemTrayAvailable())
-        return; // no tray on this desktop: closing the window will quit the app
+#ifdef Q_OS_ANDROID
+        return; // no system tray on Android: alerts use the in-app dialog
+#endif
+        if (!QSystemTrayIcon::isSystemTrayAvailable())
+            return;
+        // ... rest unchanged
+        // no tray on this desktop: closing the window will quit the app
 
     m_tray = new QSystemTrayIcon(makeAppIcon(), this);
     m_tray->setToolTip(QStringLiteral("Gold & Dollar Tracker"));
