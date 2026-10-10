@@ -46,7 +46,7 @@ if(ANDROID)
     # Android: no tests, no install() rules, the "apk" target does the packaging
     set_target_properties(PriceTracker PROPERTIES
         QT_ANDROID_VERSION_NAME "${APP_VERSION}"
-        QT_ANDROID_VERSION_CODE 1.1
+        QT_ANDROID_VERSION_CODE 2
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
     )
 
