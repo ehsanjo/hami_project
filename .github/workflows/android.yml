@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:        # lets you run it manually from the Actions tab
 
 env:
