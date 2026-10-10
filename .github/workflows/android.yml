@@ -9,6 +9,9 @@ env:
   QT_VERSION: "6.8.3"       # use the same minor version you use locally
   NDK_VERSION: "26.1.10909125"   # the NDK Qt 6.8 expects
 
+permissions:
+  contents: write      # put this at the top level, next to "on:" and "env:"
+
 jobs:
   apk:
     runs-on: ubuntu-24.04
@@ -60,6 +63,9 @@ jobs:
       - name: Build APK
         run: cmake --build build --target apk
 
+      - name: Show manifest icon line
+        run: grep -n "icon" build/android-build/AndroidManifest.xml || true
+
       - name: Find APK
         run: find build -name "*.apk" -print
 
@@ -81,8 +87,9 @@ jobs:
             --out PriceTracker-signed.apk aligned.apk
           "$BT/apksigner" verify --verbose PriceTracker-signed.apk
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
         with:
-          name: PriceTracker-apk
-          path: PriceTracker-signed.apk
+          tag_name: build-${{ github.run_number }}
+          name: PriceTracker build ${{ github.run_number }}
+          files: PriceTracker-signed.apk

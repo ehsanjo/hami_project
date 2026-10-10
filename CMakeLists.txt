@@ -46,7 +46,8 @@ if(ANDROID)
     # Android: no tests, no install() rules, the "apk" target does the packaging
     set_target_properties(PriceTracker PROPERTIES
         QT_ANDROID_VERSION_NAME "${APP_VERSION}"
-        QT_ANDROID_VERSION_CODE 1      # increase for every new release
+        QT_ANDROID_VERSION_CODE 1
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
     )
 
     # HTTPS support libraries. Only used if you cloned
@@ -63,6 +64,8 @@ else()
     add_test(NAME tst_core COMMAND tst_core)
 
     if(WIN32)
+        enable_language(RC)
+        target_sources(PriceTracker PRIVATE packaging/windows/app.rc)
         # Windows: no console window, install exe at the root of the install dir
         set_target_properties(PriceTracker PROPERTIES WIN32_EXECUTABLE ON)
         install(TARGETS PriceTracker RUNTIME DESTINATION .)
