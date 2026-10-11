@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
@@ -24,6 +25,7 @@
 #include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTabBar>
 #include <QTime>
 #include <QTimeZone>
 #include <QTimer>
@@ -34,6 +36,10 @@
 #include "chartwidget.h"
 #include "settings.h"
 #include "settingswidget.h"
+#ifdef Q_OS_ANDROID
+#include <QCoreApplication>
+#include <QJniObject>
+#endif
 
 namespace {
 
@@ -77,6 +83,19 @@ QIcon makeAppIcon()
 
     return QIcon(pm);
 }
+#ifdef Q_OS_ANDROID
+void showAndroidNotification(const QString &title, const QString &text, int id)
+{
+    QJniObject activity = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>(
+        "org/pricetracker/Notifier", "notify",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;I)V",
+        activity.object(),
+        QJniObject::fromString(title).object<jstring>(),
+        QJniObject::fromString(text).object<jstring>(),
+        jint(id));
+}
+#endif
 
 } // namespace
 
@@ -88,6 +107,7 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowIcon(makeAppIcon());
 
     auto *tabs = new QTabWidget(this);
+    m_tabs=tabs;
 #ifdef Q_OS_ANDROID
     // Phone layout: thumb-friendly tab bar at the bottom, scroll arrows for 6 tabs
     tabs->setTabPosition(QTabWidget::South);
@@ -134,19 +154,26 @@ MainWindow::MainWindow(QWidget *parent)
     m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     QScroller::grabGesture(m_table->viewport(), QScroller::LeftMouseButtonGesture);
 #endif
-    tabs->addTab(livePage, QStringLiteral("Live prices"));
+#ifdef Q_OS_ANDROID
+    const QString nLive = "Live", nChart = "Chart", nStats = "Stats",
+        nAlerts = "Alerts", nHist = "History", nSet = "Settings";
+#else
+    const QString nLive = "Live prices", nChart = "Chart", nStats = "Analysis",
+        nAlerts = "Alerts", nHist = "History", nSet = "Settings";
+#endif
+    tabs->addTab(livePage, nLive);
 
     // ---------- Chart page ----------
     m_chartWidget = new ChartWidget(&m_db, this);
-    tabs->addTab(m_chartWidget, QStringLiteral("Chart"));
+    tabs->addTab(m_chartWidget, nChart);
 
     // ---------- Analysis page ----------
     m_analysisWidget = new AnalysisWidget(&m_db, this);
-    tabs->addTab(m_analysisWidget, QStringLiteral("Analysis"));
+    tabs->addTab(m_analysisWidget, nStats);
 
     // ---------- Alerts page ----------
     m_alertsWidget = new AlertsWidget(&m_alertManager, this);
-    tabs->addTab(m_alertsWidget, QStringLiteral("Alerts"));
+    tabs->addTab(m_alertsWidget, nAlerts);
 
     // ---------- History page ----------
     auto *historyPage = new QWidget;
@@ -175,11 +202,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_historyInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
     historyLayout->addWidget(m_historyInfo);
 
-    tabs->addTab(historyPage, QStringLiteral("History"));
+    tabs->addTab(historyPage, nHist);
 
     // ---------- Settings page ----------
     m_settingsWidget = new SettingsWidget(this);
-    tabs->addTab(m_settingsWidget, QStringLiteral("Settings"));
+    tabs->addTab(m_settingsWidget, nSet);
 
     setCentralWidget(tabs);
 
@@ -188,6 +215,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_statusLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 #endif
     statusBar()->addWidget(m_statusLabel);
+    statusBar()->setSizeGripEnabled(false);
 
     // ---------- Database ----------
     QString dbError;
@@ -208,18 +236,27 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_alertManager, &AlertManager::alertTriggered, this, &MainWindow::onAlertTriggered);
     connect(m_settingsWidget, &SettingsWidget::settingsApplied, this, &MainWindow::onSettingsApplied);
     connect(m_historyCombo, &QComboBox::currentIndexChanged, this, &MainWindow::refreshHistory);
-    connect(tabs, &QTabWidget::currentChanged, this, &MainWindow::refreshHistory);
+    connect(tabs, &QTabWidget::currentChanged, this, [this](int) {
+        refreshHistory();
+        if (m_tabs->currentWidget() == m_chartWidget)
+            m_chartWidget->reload();
+        else if (m_tabs->currentWidget() == m_analysisWidget && !m_lastItems.isEmpty())
+            m_analysisWidget->refresh(m_lastItems);
+    });
 #ifdef Q_OS_ANDROID
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) {
                 if (state == Qt::ApplicationActive) {
-                    refresh();               // does nothing if a request is already running
-                    updateTimerInterval();   // restart the timer
+                    refresh();
+                    updateTimerInterval();
+                } else if (state == Qt::ApplicationSuspended) {
+                    m_timer->stop();
                 }
             });
 #endif
 #ifdef Q_OS_ANDROID
     // Bigger touch targets
+        m_autoCheck->setText(QStringLiteral("Auto every"));
     setStyleSheet(QStringLiteral(
         "QPushButton { min-height: 48px; padding: 6px 14px; }"
         "QComboBox { min-height: 44px; }"
@@ -238,6 +275,12 @@ MainWindow::MainWindow(QWidget *parent)
 #endif
     m_intervalSpin->setEnabled(m_autoCheck->isChecked());
     updateTimerInterval();
+#ifdef Q_OS_ANDROID
+    QJniObject::callStaticMethod<void>(
+        "org/pricetracker/Notifier", "requestPermission",
+        "(Landroid/app/Activity;)V",
+        QNativeInterface::QAndroidApplication::context().object());
+#endif
     QTimer::singleShot(0, this, &MainWindow::refresh); // first fetch right after startup
 }
 
@@ -245,7 +288,7 @@ void MainWindow::setupTray()
 {
 #ifdef Q_OS_ANDROID
         return; // no system tray on Android: alerts use the in-app dialog
-#endif
+#else
         if (!QSystemTrayIcon::isSystemTrayAvailable())
             return;
         // ... rest unchanged
@@ -269,6 +312,19 @@ void MainWindow::setupTray()
 
     m_tray->show();
     QApplication::setQuitOnLastWindowClosed(false);
+#endif
+
+}
+
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Back && m_tabs && m_tabs->currentIndex() != 0) {
+        m_tabs->setCurrentIndex(0);
+        event->accept();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::updateTrayTooltip()
@@ -334,7 +390,8 @@ void MainWindow::updateTimerInterval()
         seconds = qMin(base * factor, qMax(base, 900));
     }
     m_timer->setInterval(seconds * 1000);
-    if (m_autoCheck->isChecked())
+    if (m_autoCheck->isChecked()
+        && QGuiApplication::applicationState() != Qt::ApplicationSuspended)
         m_timer->start();
     else
         m_timer->stop();
@@ -376,9 +433,10 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
 
     m_table->setRowCount(items.size());
 
-    const QColor up(0, 140, 0);
-    const QColor down(200, 0, 0);
-    const QColor gray(130, 130, 130);
+    const bool darkTheme = palette().color(QPalette::Window).lightness() < 128;
+    const QColor up   = darkTheme ? QColor(80, 200, 100)  : QColor(0, 140, 0);
+    const QColor down = darkTheme ? QColor(255, 100, 100) : QColor(200, 0, 0);
+    const QColor gray = darkTheme ? QColor(150, 150, 150) : QColor(130, 130, 130);
 
     for (int row = 0; row < items.size(); ++row) {
         const PriceItem &it = items.at(row);
@@ -428,11 +486,14 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
         status += QStringLiteral("  |  %1 new record(s) saved").arg(added);
     m_statusLabel->setText(status);
 
-    refreshHistory();
-    m_chartWidget->reload();
-    m_analysisWidget->refresh(items);
 
-    // Alerts: check first, then let the Alerts tab show the new state
+    m_lastItems = items;
+    refreshHistory();                       // returns early if hidden
+    if (m_chartWidget->isVisible())
+        m_chartWidget->reload();
+    if (m_analysisWidget->isVisible())
+        m_analysisWidget->refresh(items);
+
     m_alertManager.check(items);
     m_alertsWidget->refresh(items);
 }
@@ -465,21 +526,29 @@ void MainWindow::onAlertTriggered(const Alert &alert, double price)
                              .arg(alert.label, formatNumber(price), direction,
                                   formatNumber(alert.threshold));
 
-    if (m_tray && m_tray->isVisible() && QSystemTrayIcon::supportsMessages()) {
-        m_tray->showMessage(title, text, QSystemTrayIcon::Information, 15000);
-    } else {
-        // No tray notification available: show a small non-blocking dialog
+    auto showDialog = [this, title, text]() {
         auto *box = new QMessageBox(QMessageBox::Information, title, text,
                                     QMessageBox::Ok, this);
         box->setAttribute(Qt::WA_DeleteOnClose);
         box->open();
-    }
+    };
+
+#ifdef Q_OS_ANDROID
+    showAndroidNotification(title, text, int(qHash(alert.label) & 0x7fffffff));
+    if (isActiveWindow())
+        showDialog();
+#else
+    if (m_tray && m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
+        m_tray->showMessage(title, text, QSystemTrayIcon::Information, 15000);
+    else
+        showDialog();
     QApplication::beep();
+#endif
 }
 
 void MainWindow::refreshHistory()
 {
-    if (!m_db.isOpen())
+    if (!m_db.isOpen() || !m_historyTable->isVisible())
         return;
 
     m_historyInfo->setText(QStringLiteral("Database: %1   |   %2 records in total")
@@ -491,8 +560,14 @@ void MainWindow::refreshHistory()
     if (key.isEmpty())
         return;
 
-    static const QTimeZone tehran("Asia/Tehran");
-    const QVector<PricePoint> points = m_db.history(key);
+    static const QTimeZone tehran = [] {
+        QTimeZone z("Asia/Tehran");
+        return z.isValid() ? z : QTimeZone::fromSecondsAheadOfUtc(3 * 3600 + 1800);
+    }();
+
+    const QVector<PricePoint> points =
+        m_db.history(key, QDateTime::currentDateTimeUtc().addDays(-14));
+
     const int shown = qMin(points.size(), 500); // newest 500, newest first
     m_historyTable->setRowCount(shown);
 

@@ -46,6 +46,16 @@ bool PriceDatabase::open(QString *error, const QString &filePath)
         return false;
     }
 
+    QSqlQuery pragma(db);
+    pragma.exec(QStringLiteral("PRAGMA journal_mode=WAL"));
+    pragma.exec(QStringLiteral("PRAGMA synchronous=NORMAL"));
+
+    QSqlQuery prune(db);
+    prune.prepare(QStringLiteral("DELETE FROM prices WHERE ts < :cutoff"));
+    prune.bindValue(QStringLiteral(":cutoff"),
+                    QDateTime::currentDateTimeUtc().addDays(-90).toString(Qt::ISODate));
+    prune.exec();
+
     QSqlQuery q(db);
     const bool ok = q.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS prices ("

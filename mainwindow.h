@@ -15,6 +15,8 @@ class QCheckBox;
 class QCloseEvent;
 class QComboBox;
 class QLabel;
+class QKeyEvent;
+class QTabWidget;
 class QPushButton;
 class QSpinBox;
 class QSystemTrayIcon;
@@ -30,6 +32,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
     void refresh();
@@ -47,6 +50,8 @@ private:
     void setupTray();
     void updateTimerInterval();
     void updateTrayTooltip();
+    QTabWidget *m_tabs = nullptr;
+    QVector<PriceItem> m_lastItems;
 
     PriceFetcher m_fetcher;
     PriceDatabase m_db;

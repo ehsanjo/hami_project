@@ -92,6 +92,7 @@ void PriceFetcher::fetch()
             QString message = reply->errorString();
             if (status > 0)
                 message = QStringLiteral("HTTP %1 - %2").arg(status).arg(message);
+            m_subdomain = (m_subdomain + 1) % kCallSubdomainCount;
             emit fetchFailed(message);
             return;
         }
@@ -158,7 +159,12 @@ QVector<PriceItem> PriceFetcher::parseResponse(const QByteArray &body, QString *
     }
     const QJsonObject current = currentValue.toObject();
 
-    const QTimeZone tehran("Asia/Tehran");
+    static const QTimeZone tehran = [] {
+        QTimeZone z("Asia/Tehran");
+        return z.isValid() ? z : QTimeZone::fromSecondsAheadOfUtc(3 * 3600 + 1800);
+    }();
+
+
     bool anyFound = false;
 
     for (const WatchItem &w : kWatchList) {

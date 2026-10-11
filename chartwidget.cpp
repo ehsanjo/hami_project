@@ -33,12 +33,7 @@ ChartWidget::ChartWidget(PriceDatabase *db, QWidget *parent)
     auto *layout = new QVBoxLayout(this);
 
     // Top bar: item + time range
-    auto *bar = new QHBoxLayout;
-    bar->addWidget(new QLabel(QStringLiteral("Item:")));
     m_itemCombo = new QComboBox;
-    bar->addWidget(m_itemCombo, 1);
-    bar->addSpacing(12);
-    bar->addWidget(new QLabel(QStringLiteral("Range:")));
     m_rangeCombo = new QComboBox;
     m_rangeCombo->addItem(QStringLiteral("Last hour"), 3600);
     m_rangeCombo->addItem(QStringLiteral("Last 24 hours"), 24 * 3600);
@@ -46,15 +41,26 @@ ChartWidget::ChartWidget(PriceDatabase *db, QWidget *parent)
     m_rangeCombo->addItem(QStringLiteral("Last 30 days"), 30 * 24 * 3600);
     m_rangeCombo->addItem(QStringLiteral("All"), 0);
     m_rangeCombo->setCurrentIndex(1);
+
+#ifdef Q_OS_ANDROID
+    layout->addWidget(m_itemCombo);   // one under the other, full width
+    layout->addWidget(m_rangeCombo);
+#else
+    auto *bar = new QHBoxLayout;
+    bar->addWidget(new QLabel(QStringLiteral("Item:")));
+    bar->addWidget(m_itemCombo, 1);
+    bar->addSpacing(12);
+    bar->addWidget(new QLabel(QStringLiteral("Range:")));
     bar->addWidget(m_rangeCombo);
     layout->addLayout(bar);
+#endif
 
     // Chart
     m_chart = new QChart;
     m_chart->legend()->hide();
 
     m_series = new QLineSeries;
-    m_series->setPointsVisible(true);
+    m_series->setPointsVisible(false);
     m_chart->addSeries(m_series);
 
     m_axisX = new QDateTimeAxis;
@@ -64,6 +70,11 @@ ChartWidget::ChartWidget(PriceDatabase *db, QWidget *parent)
 
     m_axisY = new QValueAxis;
     m_axisY->setTickCount(6);
+#ifdef Q_OS_ANDROID
+    m_axisX->setTickCount(3);
+    m_axisY->setTickCount(5);
+    m_chart->setMargins(QMargins(0, 0, 0, 0));
+#endif
 
     m_chart->addAxis(m_axisX, Qt::AlignBottom);
     m_chart->addAxis(m_axisY, Qt::AlignLeft);
@@ -119,8 +130,10 @@ void ChartWidget::reload()
         return;
     }
 
-    static const QTimeZone tehran("Asia/Tehran");
-
+    static const QTimeZone tehran = [] {
+        QTimeZone z("Asia/Tehran");
+        return z.isValid() ? z : QTimeZone::fromSecondsAheadOfUtc(3 * 3600 + 1800);
+    }();
     QVector<QPointF> chartPoints;
     chartPoints.reserve(points.size());
     double minY = points.first().price;
@@ -128,22 +141,24 @@ void ChartWidget::reload()
     qint64 firstX = 0;
     qint64 lastX = 0;
 
+    const int step = qMax(1, int(points.size() / 600));
     for (int i = 0; i < points.size(); ++i) {
         const PricePoint &p = points.at(i);
+        minY = qMin(minY, p.price);
+        maxY = qMax(maxY, p.price);
+        if (i % step != 0 && i != points.size() - 1)
+            continue;
 
-        // Tehran wall-clock time, re-read as local time, so the axis shows Tehran time
-        // whatever the computer's own time zone is.
         const QDateTime wall = p.time.toTimeZone(tehran);
         const QDateTime asLocal(wall.date(), wall.time());
         const qint64 x = asLocal.toMSecsSinceEpoch();
 
         chartPoints.append(QPointF(x, p.price));
-        minY = qMin(minY, p.price);
-        maxY = qMax(maxY, p.price);
-        if (i == 0)
+        if (chartPoints.size() == 1)
             firstX = x;
         lastX = x;
     }
+    m_series->setPointsVisible(chartPoints.size() < 150);
     m_series->replace(chartPoints);
 
     // Axis ranges with a little padding

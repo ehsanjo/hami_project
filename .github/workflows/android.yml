@@ -54,11 +54,23 @@ jobs:
 
       - name: Get android_openssl
         run: git clone --depth 1 https://github.com/KDAB/android_openssl.git
+      
+      - name: Create AndroidManifest with notification permission
+        run: |
+          TEMPLATE=$(find "$GITHUB_WORKSPACE" "$HOME" \
+            -path '*6.8.3/android_arm64_v8a/src/android/templates/AndroidManifest.xml' \
+            2>/dev/null | head -n 1)
+          echo "Using template: $TEMPLATE"
+          test -f "$TEMPLATE"
+          mkdir -p android
+          cp "$TEMPLATE" android/AndroidManifest.xml
+          sed -i 's|<!-- %%INSERT_PERMISSIONS -->|<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <!-- %%INSERT_PERMISSIONS -->|' android/AndroidManifest.xml
+          grep -n "POST_NOTIFICATIONS" android/AndroidManifest.xml
 
       - name: Configure
         run: |
           "$QT_ROOT_DIR/bin/qt-cmake" -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_BUILD_TYPE=Release \
             -DQT_HOST_PATH="$QT_HOST_PATH" \
             -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
             -DANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}"
