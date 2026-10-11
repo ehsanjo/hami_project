@@ -66,6 +66,24 @@ jobs:
           cp "$TEMPLATE" android/AndroidManifest.xml
           sed -i 's|<!-- %%INSERT_PERMISSIONS -->|<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <!-- %%INSERT_PERMISSIONS -->|' android/AndroidManifest.xml
           grep -n "POST_NOTIFICATIONS" android/AndroidManifest.xml
+          sed -i 's|<!-- %%INSERT_PERMISSIONS -->|<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>\n    <!-- %%INSERT_PERMISSIONS -->|' android/AndroidManifest.xml
+          python3 - <<'EOF'
+          p = 'android/AndroidManifest.xml'
+          s = open(p).read()
+          svc = '''
+              <service android:name="org.pricetracker.PriceService"
+                  android:process=":qt_service" android:exported="false"
+                  android:foregroundServiceType="dataSync">
+                  <meta-data android:name="android.app.lib_name" android:value="-- %%INSERT_APP_LIB_NAME%% --"/>
+                  <meta-data android:name="android.app.arguments" android:value="-service"/>
+                  <meta-data android:name="android.app.extract_android_style" android:value="minimal"/>
+              </service>
+          '''
+          if 'PriceService' not in s:
+              s = s.replace('</application>', svc + '</application>')
+          open(p, 'w').write(s)
+          EOF
+          grep -n "PriceService\|FOREGROUND_SERVICE" android/AndroidManifest.xml          
 
       - name: Configure
         run: |

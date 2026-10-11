@@ -38,7 +38,7 @@ qt_add_executable(PriceTracker
 )
 target_link_libraries(PriceTracker PRIVATE PriceCore Qt6::Widgets Qt6::Charts)
 
-set(APP_VERSION "1.1.0")
+set(APP_VERSION "1.3.0")
 target_compile_definitions(PriceTracker PRIVATE APP_VERSION="${APP_VERSION}")
 
 include(GNUInstallDirs)
@@ -47,7 +47,7 @@ if(ANDROID)
     # Android: no tests, no install() rules, the "apk" target does the packaging
     set_target_properties(PriceTracker PROPERTIES
         QT_ANDROID_VERSION_NAME "${APP_VERSION}"
-        QT_ANDROID_VERSION_CODE 3
+        QT_ANDROID_VERSION_CODE 4
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
     )
     target_sources(PriceTracker PRIVATE androidservice.h androidservice.cpp)
