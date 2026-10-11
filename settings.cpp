@@ -17,6 +17,16 @@ QString sourceUrl()
     return url.isEmpty() ? defaultSourceUrl() : url;
 }
 
+bool backgroundAlerts()
+{
+    return QSettings().value(QStringLiteral("backgroundAlerts"), false).toBool();
+}
+
+void setBackgroundAlerts(bool on)
+{
+    QSettings().setValue(QStringLiteral("backgroundAlerts"), on);
+}
+
 void setSourceUrl(const QString &url)
 {
     QSettings s;

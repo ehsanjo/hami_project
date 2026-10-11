@@ -62,6 +62,7 @@ private:
     QCheckBox *m_autoCheck;
     QSpinBox *m_intervalSpin;
     QLabel *m_statusLabel;
+    QLabel *m_updatedLabel = nullptr;
     QComboBox *m_historyCombo;
     QTableWidget *m_historyTable;
     QLabel *m_historyInfo;

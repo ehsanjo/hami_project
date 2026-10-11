@@ -19,6 +19,7 @@ add_library(PriceCore STATIC
     analysis.h analysis.cpp
     alertmanager.h alertmanager.cpp
     settings.h settings.cpp
+    androidservice.h androidservice.cpp
 )
 target_include_directories(PriceCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(PriceCore PUBLIC Qt6::Core Qt6::Network Qt6::Sql)
@@ -49,6 +50,7 @@ if(ANDROID)
         QT_ANDROID_VERSION_CODE 3
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
     )
+    target_sources(PriceTracker PRIVATE androidservice.h androidservice.cpp)
 set_property(TARGET PriceTracker APPEND PROPERTY QT_ANDROID_TARGET_SDK_VERSION 34)
 
     # HTTPS support libraries. Only used if you cloned

@@ -8,7 +8,7 @@
 #include <QColor>
 #include <QComboBox>
 #include <QGuiApplication>
-#include <QScroller>
+
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
@@ -20,6 +20,9 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScroller>
+#include <QScrollBar>
+#include <QScrollerProperties>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
@@ -39,6 +42,7 @@
 #ifdef Q_OS_ANDROID
 #include <QCoreApplication>
 #include <QJniObject>
+#include "androidservice.h"
 #endif
 
 namespace {
@@ -60,6 +64,26 @@ QTableWidgetItem *makeItem(const QString &text, bool alignRight = true)
     item->setTextAlignment((alignRight ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
     return item;
 }
+
+#ifdef Q_OS_ANDROID
+// Smooth touch scrolling, and no selection, focus or auto-scroll on tap
+void enableTouchScroll(QTableWidget *table)
+{
+    table->setSelectionMode(QAbstractItemView::NoSelection);
+    table->setFocusPolicy(Qt::NoFocus);
+    table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    QScroller::grabGesture(table->viewport(), QScroller::LeftMouseButtonGesture);
+    QScroller *scroller = QScroller::scroller(table->viewport());
+    QScrollerProperties props = scroller->scrollerProperties();
+    const QVariant off = QVariant::fromValue<QScrollerProperties::OvershootPolicy>(
+        QScrollerProperties::OvershootAlwaysOff);
+    props.setScrollMetric(QScrollerProperties::VerticalOvershootPolicy, off);
+    props.setScrollMetric(QScrollerProperties::HorizontalOvershootPolicy, off);
+    scroller->setScrollerProperties(props);
+}
+#endif
 
 // A simple gold coin drawn in code, so no image files are needed.
 QIcon makeAppIcon()
@@ -133,6 +157,17 @@ MainWindow::MainWindow(QWidget *parent)
     bar->addWidget(m_intervalSpin);
     bar->addStretch();
     liveLayout->addLayout(bar);
+#ifdef Q_OS_ANDROID
+    auto *bgCheck = new QCheckBox(QStringLiteral("Background alerts"));
+    bgCheck->setChecked(AppSettings::backgroundAlerts());
+    liveLayout->addWidget(bgCheck);
+    connect(bgCheck, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::setBackgroundAlerts(on);
+        AndroidBridge::setBackgroundService(on);
+    });
+    if (bgCheck->isChecked())
+        AndroidBridge::setBackgroundService(true);
+#endif
 
     m_table = new QTableWidget(0, 5);
     m_table->setHorizontalHeaderLabels({QStringLiteral("Name"),
@@ -145,15 +180,33 @@ MainWindow::MainWindow(QWidget *parent)
     m_table->verticalHeader()->hide();
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+
+#ifdef Q_OS_ANDROID
+    m_updatedLabel = new QLabel(QStringLiteral("Last update: -"));
+    m_updatedLabel->setWordWrap(true);
+    m_updatedLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    liveLayout->addWidget(m_updatedLabel);
+#endif
+
     liveLayout->addWidget(m_table);
 #ifdef Q_OS_ANDROID
-    // Portrait phone screens are narrow: hide "Change" and "Updated".
-    // Stale rows still turn gray. Delete these two lines to show all columns.
+    // Phone: hide "Change" and "Updated" columns; the update time of each item
+    // is shown under its name instead (see onPricesReady).
     m_table->setColumnHidden(2, true);
     m_table->setColumnHidden(4, true);
-    m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    QScroller::grabGesture(m_table->viewport(), QScroller::LeftMouseButtonGesture);
+
+    // Fixed column widths: no re-measuring of every cell on each refresh
+    {
+        auto *hh = m_table->horizontalHeader();
+        const QFontMetrics fm(m_table->font());
+        hh->setSectionResizeMode(1, QHeaderView::Fixed);
+        hh->setSectionResizeMode(3, QHeaderView::Fixed);
+        hh->resizeSection(1, fm.horizontalAdvance(QStringLiteral("0,000,000,000")) + 28);
+        hh->resizeSection(3, fm.horizontalAdvance(QStringLiteral("+00.00%")) + 28);
+    }
+    enableTouchScroll(m_table);
 #endif
+
 #ifdef Q_OS_ANDROID
     const QString nLive = "Live", nChart = "Chart", nStats = "Stats",
         nAlerts = "Alerts", nHist = "History", nSet = "Settings";
@@ -181,7 +234,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *historyBar = new QHBoxLayout;
     historyBar->addWidget(new QLabel(QStringLiteral("Item:")));
+
     m_historyCombo = new QComboBox;
+    m_historyCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_historyCombo->setMinimumContentsLength(12);
+
     historyBar->addWidget(m_historyCombo, 1);
     historyLayout->addLayout(historyBar);
 
@@ -194,12 +251,13 @@ MainWindow::MainWindow(QWidget *parent)
     m_historyTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     historyLayout->addWidget(m_historyTable);
 #ifdef Q_OS_ANDROID
-    m_historyTable->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    QScroller::grabGesture(m_historyTable->viewport(), QScroller::LeftMouseButtonGesture);
+    enableTouchScroll(m_historyTable);
 #endif
 
     m_historyInfo = new QLabel;
     m_historyInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_historyInfo->setWordWrap(true);
+    m_historyInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     historyLayout->addWidget(m_historyInfo);
 
     tabs->addTab(historyPage, nHist);
@@ -270,7 +328,8 @@ MainWindow::MainWindow(QWidget *parent)
         sb->setButtonSymbols(QAbstractSpinBox::NoButtons);
 
     // Taller table rows
-    m_table->verticalHeader()->setDefaultSectionSize(48);
+    // Taller rows: the live table shows two lines (name + update time)
+    m_table->verticalHeader()->setDefaultSectionSize(m_table->fontMetrics().height() * 2 + 24);
     m_historyTable->verticalHeader()->setDefaultSectionSize(44);
 #endif
     m_intervalSpin->setEnabled(m_autoCheck->isChecked());
@@ -431,44 +490,66 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
         updateTrayTooltip();
     }
 
-    m_table->setRowCount(items.size());
+    m_table->setUpdatesEnabled(false);
+    if (m_table->rowCount() != items.size())
+        m_table->setRowCount(items.size());
 
     const bool darkTheme = palette().color(QPalette::Window).lightness() < 128;
     const QColor up   = darkTheme ? QColor(80, 200, 100)  : QColor(0, 140, 0);
     const QColor down = darkTheme ? QColor(255, 100, 100) : QColor(200, 0, 0);
     const QColor gray = darkTheme ? QColor(150, 150, 150) : QColor(130, 130, 130);
 
+    // Reuses existing cells and only touches what actually changed
+    auto setCell = [this](int row, int col, const QString &text, bool alignRight,
+                          const QColor *color) {
+        QTableWidgetItem *cell = m_table->item(row, col);
+        if (!cell) {
+            cell = makeItem(text, alignRight);
+            m_table->setItem(row, col, cell);
+        } else if (cell->text() != text) {
+            cell->setText(text);
+        }
+        const QVariant brush = color ? QVariant(QBrush(*color)) : QVariant();
+        if (cell->data(Qt::ForegroundRole) != brush)
+            cell->setData(Qt::ForegroundRole, brush);
+    };
+
     for (int row = 0; row < items.size(); ++row) {
         const PriceItem &it = items.at(row);
 
-        auto *name = makeItem(it.label, false);
-        auto *price = makeItem(it.found ? formatNumber(it.price) : QStringLiteral("-"));
-        auto *change = makeItem(it.found ? formatNumber(it.change, true) : QStringLiteral("-"));
-        auto *percent = makeItem(it.found
-                                     ? formatNumber(it.percent, true) + QStringLiteral("%")
-                                     : QStringLiteral("-"));
+        QString nameText = it.label;
+#ifdef Q_OS_ANDROID
+        // Phone: show when this price was last updated on the site, under the name
+        nameText += QLatin1Char('\n')
+                    + (it.updated.isValid() ? it.updated.toString(QStringLiteral("MM-dd HH:mm"))
+                                            : QStringLiteral("no time"))
+                    + (it.stale ? QStringLiteral("  (stale)") : QString());
+#endif
         QString updatedText = it.updated.isValid()
                                   ? it.updated.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
                                   : QStringLiteral("-");
         if (it.stale)
             updatedText += QStringLiteral("  (stale)");
-        auto *updated = makeItem(updatedText);
 
-        if (it.stale) {
-            for (auto *cell : {name, price, change, percent, updated})
-                cell->setForeground(gray);
-        } else if (it.change != 0.0) {
-            const QColor c = it.change > 0 ? up : down;
-            change->setForeground(c);
-            percent->setForeground(c);
-        }
+        const QColor *base = it.stale ? &gray : nullptr;
+        const QColor *changeColor = base;
+        if (!it.stale && it.change != 0.0)
+            changeColor = it.change > 0 ? &up : &down;
 
-        m_table->setItem(row, 0, name);
-        m_table->setItem(row, 1, price);
-        m_table->setItem(row, 2, change);
-        m_table->setItem(row, 3, percent);
-        m_table->setItem(row, 4, updated);
+        setCell(row, 0, nameText, false, base);
+        setCell(row, 1, it.found ? formatNumber(it.price) : QStringLiteral("-"), true, base);
+        setCell(row, 2, it.found ? formatNumber(it.change, true) : QStringLiteral("-"),
+                true, changeColor);
+        setCell(row, 3, it.found ? formatNumber(it.percent, true) + QStringLiteral("%")
+                                 : QStringLiteral("-"),
+                true, changeColor);
+        setCell(row, 4, updatedText, true, base);
     }
+    m_table->setUpdatesEnabled(true);
+
+    if (m_updatedLabel)
+        m_updatedLabel->setText(QStringLiteral("Last update: ")
+                                + QTime::currentTime().toString(QStringLiteral("HH:mm:ss")));
 
     // Save to the database
     const int added = m_db.insertSnapshot(items);
@@ -494,7 +575,16 @@ void MainWindow::onPricesReady(const QVector<PriceItem> &items)
     if (m_analysisWidget->isVisible())
         m_analysisWidget->refresh(items);
 
+#ifdef Q_OS_ANDROID
+    // While the background service is on, only the service fires alerts,
+    // so you never get two notifications.
+    m_alertManager.reload();
+    if (!AppSettings::backgroundAlerts())
+        m_alertManager.check(items);
+#else
     m_alertManager.check(items);
+#endif
+
     m_alertsWidget->refresh(items);
 }
 
@@ -515,6 +605,11 @@ void MainWindow::onFetchFailed(const QString &message)
     else
         text += QStringLiteral("  |  no data yet");
     m_statusLabel->setText(text);
+    if (m_updatedLabel)
+        m_updatedLabel->setText(m_lastSuccess.isValid()
+                                    ? QStringLiteral("Offline. Last update: ")
+                                          + m_lastSuccess.toString(QStringLiteral("HH:mm:ss"))
+                                    : QStringLiteral("Offline. No data yet"));
 }
 
 void MainWindow::onAlertTriggered(const Alert &alert, double price)
@@ -551,30 +646,54 @@ void MainWindow::refreshHistory()
     if (!m_db.isOpen() || !m_historyTable->isVisible())
         return;
 
+#ifdef Q_OS_ANDROID
+    m_historyInfo->setText(QStringLiteral("%1 records in total").arg(m_db.totalRows()));
+#else
     m_historyInfo->setText(QStringLiteral("Database: %1   |   %2 records in total")
                                .arg(m_db.path())
                                .arg(m_db.totalRows()));
+#endif
 
-    m_historyTable->setRowCount(0);
     const QString key = m_historyCombo->currentData().toString();
-    if (key.isEmpty())
+    if (key.isEmpty()) {
+        m_historyTable->setRowCount(0);
         return;
+    }
 
     static const QTimeZone tehran = [] {
         QTimeZone z("Asia/Tehran");
         return z.isValid() ? z : QTimeZone::fromSecondsAheadOfUtc(3 * 3600 + 1800);
     }();
-
     const QVector<PricePoint> points =
         m_db.history(key, QDateTime::currentDateTimeUtc().addDays(-14));
 
+    // Nothing new since last time: leave the table (and the user's scroll position) alone
+    const QString signature = key + QLatin1Char('|') + QString::number(points.size())
+                              + QLatin1Char('|')
+                              + (points.isEmpty()
+                                     ? QStringLiteral("0")
+                                     : QString::number(points.last().time.toMSecsSinceEpoch()));
+    const QString oldSignature = m_historyTable->property("signature").toString();
+    if (oldSignature == signature)
+        return;
+    m_historyTable->setProperty("signature", signature);
+
+    // Keep the scroll position when new rows arrive; start at the top for another item
+    QScrollBar *scrollBar = m_historyTable->verticalScrollBar();
+    const int scrollValue = oldSignature.section(QLatin1Char('|'), 0, 0) == key
+                                ? scrollBar->value() : 0;
+
+    m_historyTable->setUpdatesEnabled(false);
     const int shown = qMin(points.size(), 500); // newest 500, newest first
+    m_historyTable->setRowCount(0);
     m_historyTable->setRowCount(shown);
 
     for (int i = 0; i < shown; ++i) {
         const PricePoint &p = points.at(points.size() - 1 - i);
         m_historyTable->setItem(i, 0, makeItem(
-            p.time.toTimeZone(tehran).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")), false));
+                                          p.time.toTimeZone(tehran).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")), false));
         m_historyTable->setItem(i, 1, makeItem(formatNumber(p.price)));
     }
+    m_historyTable->setUpdatesEnabled(true);
+    scrollBar->setValue(scrollValue);
 }

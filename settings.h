@@ -7,6 +7,9 @@ namespace AppSettings {
 
 QString defaultSourceUrl();
 
+bool backgroundAlerts();          // default false
+void setBackgroundAlerts(bool on);
+
 QString sourceUrl();
 void setSourceUrl(const QString &url);
 

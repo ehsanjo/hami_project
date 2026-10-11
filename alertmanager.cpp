@@ -10,6 +10,7 @@ AlertManager::AlertManager(QObject *parent)
 
 void AlertManager::add(const Alert &alert)
 {
+    load(); // pick up changes from the other process first
     Alert a = alert;
     a.fired = false;
     m_alerts.append(a);
@@ -19,11 +20,27 @@ void AlertManager::add(const Alert &alert)
 
 void AlertManager::removeAt(int index)
 {
+    load();
     if (index < 0 || index >= m_alerts.size())
         return;
     m_alerts.removeAt(index);
     save();
     emit alertsChanged();
+}
+
+void AlertManager::reload()
+{
+    const QVector<Alert> before = m_alerts;
+    load();
+    bool same = before.size() == m_alerts.size();
+    for (int i = 0; same && i < before.size(); ++i) {
+        const Alert &a = before.at(i);
+        const Alert &b = m_alerts.at(i);
+        same = a.key == b.key && a.condition == b.condition
+               && a.threshold == b.threshold && a.fired == b.fired;
+    }
+    if (!same)
+        emit alertsChanged();
 }
 
 void AlertManager::check(const QVector<PriceItem> &items)
@@ -65,7 +82,9 @@ void AlertManager::check(const QVector<PriceItem> &items)
 
 void AlertManager::load()
 {
+    m_alerts.clear();
     QSettings s;
+    s.sync();
     const int count = s.beginReadArray(QStringLiteral("alerts"));
     for (int i = 0; i < count; ++i) {
         s.setArrayIndex(i);

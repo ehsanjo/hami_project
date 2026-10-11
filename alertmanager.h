@@ -29,6 +29,8 @@ public:
 
     // Call after every successful price update.
     void check(const QVector<PriceItem> &items);
+    // Re-reads alerts from the settings file (another process may have changed them).
+    void reload();
 
 signals:
     void alertTriggered(const Alert &alert, double price);
