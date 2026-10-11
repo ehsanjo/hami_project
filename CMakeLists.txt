@@ -19,7 +19,7 @@ add_library(PriceCore STATIC
     analysis.h analysis.cpp
     alertmanager.h alertmanager.cpp
     settings.h settings.cpp
-    androidservice.h androidservice.cpp
+
 )
 target_include_directories(PriceCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(PriceCore PUBLIC Qt6::Core Qt6::Network Qt6::Sql)
@@ -35,6 +35,8 @@ qt_add_executable(PriceTracker
     analysiswidget.h analysiswidget.cpp
     alertswidget.h alertswidget.cpp
     settingswidget.h settingswidget.cpp
+    androidservice.h
+    androidservice.cpp
 )
 target_link_libraries(PriceTracker PRIVATE PriceCore Qt6::Widgets Qt6::Charts)
 
